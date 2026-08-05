@@ -162,10 +162,13 @@ immutable caching for `/_astro/`, and Astro's directory-index routing.
 ## CI
 
 One workflow, `.github/workflows/publish-container.yml`, on push to `main`, on `v*`
-tags, daily at 09:00 UTC, and on dispatch. With no fork to reconcile, "track
-upstream" and "publish an image" are the same job:
+tags, daily at 09:00 UTC, and on dispatch. Since upstream is fetched at build
+time rather than vendored, "track upstream" and "publish an image" are the same
+job:
 
-1. `git ls-remote` resolves upstream's head to a sha.
+1. `git ls-remote` resolves upstream's head to a sha. Annotated tags emit two
+   lines (the tag object and the peeled commit), so the peeled one wins; a ref
+   that matches nothing is assumed to already be a sha.
 2. Shallow-fetch that sha and run `install.mjs --check`. A broken anchor fails here
    in seconds instead of after a ten-minute multi-arch build, and opens one
    `upstream-drift` issue with the offending anchor and the real surrounding source.
@@ -173,6 +176,16 @@ upstream" and "publish an image" are the same job:
    `STRUDEL_REF`. That is what makes the daily run cheap: if upstream hasn't moved,
    the sha is unchanged, every layer is a cache hit, and the run is a no-op.
 4. Push with `provenance: mode=max`, `sbom: true`, and a signed attestation.
+
+The build also asserts `grep -rq 'strudel-github-token' website/dist/_astro/`
+before the image is assembled. `--check` proves the anchors matched the source;
+this proves the result survived bundling, so an overlay that silently no-ops
+can't ship as a working-looking image with no sync in it.
+
+Fetching a bare commit sha needs the server to allow
+`uploadPack.allowReachableSHA1InWant`, which not every Forgejo instance enables.
+Both the Dockerfile and the CI check fall back to deepening the branch and
+checking the sha out of that.
 
 Tags: `latest`, `upstream-<short-sha>`, long sha, branch, and semver on `v*`.
 

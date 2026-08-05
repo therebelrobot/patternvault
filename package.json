@@ -2,13 +2,15 @@
   "name": "patternvault",
   "version": "0.1.0",
   "private": true,
-  "description": "GitHub-backed pattern storage for Strudel, as an overlay applied at build time",
+  "description": "Unofficial GitHub-backed pattern storage for Strudel, applied as a build-time overlay",
   "license": "Unlicense",
   "type": "module",
   "scripts": {
     "bootstrap": "./scripts/bootstrap.sh",
-    "dev": "cd build/upstream && pnpm dev",
+    "apply": "node scripts/install.mjs build/upstream",
+    "revert": "node scripts/install.mjs build/upstream --revert",
     "check": "node scripts/install.mjs build/upstream --check",
+    "dev": "./scripts/bootstrap.sh && cd build/upstream && pnpm dev",
     "docker:build": "docker build -t ghcr.io/therebelrobot/patternvault:local .",
     "docker:run": "docker run --rm -p 3010:80 ghcr.io/therebelrobot/patternvault:local",
     "docker:push": "docker buildx build --platform linux/amd64,linux/arm64 -t ghcr.io/therebelrobot/patternvault:latest --push .",
@@ -16,5 +18,9 @@
     "release:minor": "npm version minor -m \"chore: release v%s\" && git push && git push --tags",
     "release:major": "npm version major -m \"chore: release v%s\" && git push && git push --tags",
     "release:tags": "git tag --sort=-v:refname | grep '^v'"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/therebelrobot/patternvault.git"
   }
 }

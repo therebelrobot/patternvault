@@ -1,8 +1,7 @@
 name: publish container
 
-# One workflow instead of two. There is no fork to keep in sync any more —
-# upstream is fetched at build time — so "track upstream" and "publish an
-# image" collapse into the same job.
+# One workflow. Upstream is fetched at build time rather than vendored, so
+# "track upstream" and "publish an image" are the same job.
 #
 # The daily run is what keeps the Pi current: it resolves upstream's head,
 # passes that sha as a build arg, and lets the buildx cache decide whether
@@ -50,11 +49,27 @@ jobs:
       - name: resolve upstream head
         id: upstream
         run: |
+          set -euo pipefail
           REF='${{ inputs.strudel_ref || 'main' }}'
-          SHA=$(git ls-remote "$STRUDEL_REPO" "$REF" | cut -f1)
-          if [ -z "$SHA" ]; then SHA="$REF"; fi   # already a bare sha
+          # An annotated tag makes ls-remote emit two lines: the tag object and
+          # the peeled commit (refs/tags/x^{}). Prefer the peeled one, and take
+          # a single line either way, or SHA ends up multi-valued.
+          OUT=$(git ls-remote "$STRUDEL_REPO" "$REF" "refs/heads/$REF" "refs/tags/$REF^{}" || true)
+          SHA=$(printf '%s\n' "$OUT" | awk '/\^\{\}$/ {print $1; exit}')
+          if [ -z "$SHA" ]; then
+            SHA=$(printf '%s\n' "$OUT" | awk 'NR==1 {print $1}')
+          fi
+          # Nothing matched: assume REF is already a bare commit sha.
+          if [ -z "$SHA" ]; then SHA="$REF"; fi
+          case "$SHA" in
+            [0-9a-f]*) ;;
+            *) echo "could not resolve '$REF' to a commit"; exit 1 ;;
+          esac
+          BRANCH="$REF"
+          case "$REF" in [0-9a-f][0-9a-f][0-9a-f][0-9a-f]*) BRANCH=main ;; esac
           echo "sha=$SHA" >> "$GITHUB_OUTPUT"
           echo "short=${SHA:0:8}" >> "$GITHUB_OUTPUT"
+          echo "branch=$BRANCH" >> "$GITHUB_OUTPUT"
           echo "upstream $REF -> $SHA"
 
       # Cheap gate: a broken anchor should fail in seconds, not after a
@@ -65,8 +80,10 @@ jobs:
           set -o pipefail
           git init --quiet /tmp/upstream
           git -C /tmp/upstream remote add origin "$STRUDEL_REPO"
-          git -C /tmp/upstream fetch --depth 1 --quiet origin '${{ steps.upstream.outputs.sha }}'
-          git -C /tmp/upstream checkout --quiet FETCH_HEAD
+          git -C /tmp/upstream fetch --depth 1 --quiet origin '${{ steps.upstream.outputs.sha }}' \
+            || git -C /tmp/upstream fetch --depth 100 --quiet origin '${{ steps.upstream.outputs.branch }}'
+          git -C /tmp/upstream checkout --quiet FETCH_HEAD 2>/dev/null \
+            || git -C /tmp/upstream checkout --quiet '${{ steps.upstream.outputs.sha }}'
           node scripts/install.mjs /tmp/upstream --check 2>&1 | tee /tmp/anchors.log
 
       - uses: docker/setup-qemu-action@v3
@@ -108,6 +125,7 @@ jobs:
           build-args: |
             STRUDEL_REPO=${{ env.STRUDEL_REPO }}
             STRUDEL_REF=${{ steps.upstream.outputs.sha }}
+            STRUDEL_BRANCH=${{ steps.upstream.outputs.branch }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha

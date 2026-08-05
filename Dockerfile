@@ -15,6 +15,10 @@ ARG STRUDEL_REPO=https://codeberg.org/uzu/strudel.git
 # `git ls-remote`, which also makes the layer cache correct: if upstream has
 # not moved, the sha is unchanged and the whole clone layer is a cache hit.
 ARG STRUDEL_REF=main
+# Fallback branch. Fetching a bare sha needs the server to allow
+# uploadPack.allowReachableSHA1InWant, which not every Forgejo instance does;
+# if that is refused we deepen this branch instead and check the sha out of it.
+ARG STRUDEL_BRANCH=main
 
 RUN apt-get update \
  && apt-get install -y --no-install-recommends git ca-certificates \
@@ -36,8 +40,11 @@ WORKDIR /src
 RUN git init --quiet upstream \
  && cd upstream \
  && git remote add origin "$STRUDEL_REPO" \
- && git fetch --depth 1 --quiet origin "$STRUDEL_REF" \
- && git checkout --quiet FETCH_HEAD \
+ && ( git fetch --depth 1 --quiet origin "$STRUDEL_REF" \
+      || ( echo "fetch by ref failed, deepening $STRUDEL_BRANCH" \
+           && git fetch --depth 100 --quiet origin "$STRUDEL_BRANCH" ) ) \
+ && ( git checkout --quiet FETCH_HEAD 2>/dev/null \
+      || git checkout --quiet "$STRUDEL_REF" ) \
  && git --no-pager log -1 --format='upstream %H %ci' \
  && rm -rf .git
 
@@ -48,7 +55,14 @@ RUN node scripts/install.mjs upstream
 WORKDIR /src/upstream
 RUN --mount=type=cache,id=pnpm-store,target=/pnpm/store \
     pnpm install --frozen-lockfile
-RUN npm run build && test -d website/dist
+# The --check gate in CI proves the anchors matched. This proves the result
+# survived bundling: a silently-unapplied overlay would otherwise produce a
+# perfectly working image with no sync in it.
+RUN npm run build \
+ && test -d website/dist \
+ && if ! grep -rq 'strudel-github-token' website/dist/_astro/; then \
+      echo 'FATAL: overlay is missing from the build output'; exit 1; \
+    fi
 
 
 FROM nginx:1.27-alpine AS runtime

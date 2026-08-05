@@ -35,7 +35,7 @@ if (!target) {
   process.exit(1);
 }
 
-const MARK = 'github-storage';
+const MARK = 'patternvault';
 
 // Paths the overlay owns. Removed wholesale on --revert.
 const OVERLAY_PATHS = ['website/src/github'];
