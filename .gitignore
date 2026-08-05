@@ -1,0 +1,5 @@
+# upstream checkout, fetched on demand — never committed
+build/
+node_modules/
+*.log
+.DS_Store

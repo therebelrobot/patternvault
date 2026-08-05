@@ -1,0 +1,149 @@
+name: publish container
+
+# One workflow instead of two. There is no fork to keep in sync any more —
+# upstream is fetched at build time — so "track upstream" and "publish an
+# image" collapse into the same job.
+#
+# The daily run is what keeps the Pi current: it resolves upstream's head,
+# passes that sha as a build arg, and lets the buildx cache decide whether
+# there is any work to do. If upstream has not moved, every layer is a cache
+# hit and the run is a cheap no-op.
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  schedule:
+    - cron: '0 9 * * *'
+  workflow_dispatch:
+    inputs:
+      strudel_ref:
+        description: 'upstream ref to build (branch, tag, or sha)'
+        required: false
+        default: 'main'
+
+permissions:
+  contents: read
+  packages: write
+  id-token: write
+  attestations: write
+  issues: write
+
+concurrency:
+  group: publish-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  IMAGE: ghcr.io/therebelrobot/patternvault
+  STRUDEL_REPO: https://codeberg.org/uzu/strudel.git
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: resolve upstream head
+        id: upstream
+        run: |
+          REF='${{ inputs.strudel_ref || 'main' }}'
+          SHA=$(git ls-remote "$STRUDEL_REPO" "$REF" | cut -f1)
+          if [ -z "$SHA" ]; then SHA="$REF"; fi   # already a bare sha
+          echo "sha=$SHA" >> "$GITHUB_OUTPUT"
+          echo "short=${SHA:0:8}" >> "$GITHUB_OUTPUT"
+          echo "upstream $REF -> $SHA"
+
+      # Cheap gate: a broken anchor should fail in seconds, not after a
+      # ten-minute multi-arch build.
+      - name: verify overlay still applies
+        id: anchors
+        run: |
+          set -o pipefail
+          git init --quiet /tmp/upstream
+          git -C /tmp/upstream remote add origin "$STRUDEL_REPO"
+          git -C /tmp/upstream fetch --depth 1 --quiet origin '${{ steps.upstream.outputs.sha }}'
+          git -C /tmp/upstream checkout --quiet FETCH_HEAD
+          node scripts/install.mjs /tmp/upstream --check 2>&1 | tee /tmp/anchors.log
+
+      - uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE }}
+          tags: |
+            type=ref,event=branch
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=sha,format=long
+            type=raw,value=upstream-${{ steps.upstream.outputs.short }}
+            type=raw,value=latest,enable={{is_default_branch}}
+          labels: |
+            org.opencontainers.image.title=patternvault
+            org.opencontainers.image.licenses=AGPL-3.0-or-later
+            org.patternvault.upstream.ref=${{ steps.upstream.outputs.sha }}
+
+      - id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          # The resolved sha, not "main" — reproducible, and it makes the
+          # layer cache correct rather than serving a stale clone.
+          build-args: |
+            STRUDEL_REPO=${{ env.STRUDEL_REPO }}
+            STRUDEL_REF=${{ steps.upstream.outputs.sha }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          provenance: mode=max
+          sbom: true
+
+      - uses: actions/attest-build-provenance@v2
+        with:
+          subject-name: ${{ env.IMAGE }}
+          subject-digest: ${{ steps.build.outputs.digest }}
+          push-to-registry: true
+
+      - name: open an issue if the overlay no longer applies
+        if: failure() && steps.anchors.outcome == 'failure'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh issue list --label upstream-drift --state open --json number \
+            --jq 'length' | grep -q '^0$' || exit 0   # one open issue is enough
+          gh issue create \
+            --title "overlay no longer applies to upstream ${{ steps.upstream.outputs.short }}" \
+            --label upstream-drift \
+            --body "$(printf 'Upstream: `%s`\n\n```\n%s\n```\n\nFix the anchor in `scripts/install.mjs`, then re-run this workflow.' \
+              '${{ steps.upstream.outputs.sha }}' "$(cat /tmp/anchors.log)")"
+
+      - name: summary
+        if: success()
+        run: |
+          {
+            echo '### published'
+            echo '```'
+            echo '${{ steps.meta.outputs.tags }}'
+            echo '```'
+            echo "upstream: \`${{ steps.upstream.outputs.sha }}\`"
+            echo "digest: \`${{ steps.build.outputs.digest }}\`"
+            echo
+            echo 'On the Pi: `docker compose pull && docker compose up -d`'
+          } >> "$GITHUB_STEP_SUMMARY"

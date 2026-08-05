@@ -1,0 +1,36 @@
+name: patternvault
+
+services:
+  patternvault:
+    image: ghcr.io/therebelrobot/patternvault:latest
+    container_name: patternvault
+    restart: unless-stopped
+    ports:
+      - '3010:80'
+    labels:
+      # opt in to watchtower auto-updates, if you run it
+      com.centurylinklabs.watchtower.enable: 'true'
+    healthcheck:
+      test: ['CMD', 'wget', '-qO', '/dev/null', 'http://127.0.0.1/healthz']
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
+    logging:
+      driver: json-file
+      options:
+        max-size: '10m'
+        max-file: '3'
+# No volumes: the image is entirely static files, and pattern state lives in
+# the browser plus the GitHub repo. Nothing here needs persisting.
+#
+# Port 3010 on the host side is arbitrary — change it if something else has it.
+#
+# For HTTPS, point a reverse proxy at http://<host>:3010 under whatever
+# hostname you use internally. That is not cosmetic — see "secure context" in
+# the README: crypto.subtle, the microphone, and MIDI all behave differently
+# on a plain-http origin.
+#
+# Which upstream commit an image was built from:
+#   docker inspect ghcr.io/therebelrobot/patternvault:latest \
+#     --format '{{ index .Config.Labels "org.patternvault.upstream.ref" }}'
