@@ -38,7 +38,7 @@ if (!target) {
 const MARK = 'patternvault';
 
 // Paths the overlay owns. Removed wholesale on --revert.
-const OVERLAY_PATHS = ['website/src/github'];
+const OVERLAY_PATHS = ['website/src/patternvault'];
 
 // Each edit: anchor must appear exactly once; insertion is idempotent.
 const edits = [
@@ -48,7 +48,7 @@ const edits = [
       {
         name: 'import sync hook',
         anchor: `import { confirmDialog, parseJSON, supabase } from './repl/util.mjs';`,
-        insertAfter: `\nimport { notifyLocalChange } from './github/sync.mjs'; // ${MARK}`,
+        insertAfter: `\nimport { notifyLocalChange } from './patternvault/sync.mjs'; // ${MARK}`,
       },
       {
         name: 'notify on write',
@@ -64,6 +64,35 @@ const edits = [
     ],
   },
   {
+    file: 'website/src/repl/components/panel/Panel.jsx',
+    steps: [
+      {
+        name: 'import tab registry',
+        pattern: /^import cx from '@src\/cx\.mjs';$/m,
+        insertAfter: `\nimport { patternvaultTabNames, patternvaultTab } from '@src/patternvault/tabs.jsx'; // ${MARK}`,
+        context: "cx.mjs",
+      },
+      {
+        // Merge into the tabNames object literal, whatever it currently holds.
+        // Upstream mutates it after declaration too (`if (TAURI)`), so this
+        // sits after the whole declaration rather than inside the braces.
+        name: 'register tabs',
+        pattern: /const tabNames = \{[\s\S]*?\n\};\n/,
+        insertAfter: `Object.assign(tabNames, patternvaultTabNames); // ${MARK}\n`,
+        context: 'const tabNames',
+      },
+      {
+        // Must land AFTER every hook call in PanelContent: this line can
+        // return early, and an early return before a hook changes React's
+        // hook order between renders.
+        name: 'route tabs',
+        pattern: /function PanelContent\([^)]*\)\s*\{\n(\s*use[A-Za-z]+\(\);\n)+/,
+        insertAfter: `  const pvTab = patternvaultTab(tab, context); // ${MARK}\n  if (pvTab) return pvTab; // ${MARK}\n`,
+        context: 'function PanelContent',
+      },
+    ],
+  },
+  {
     file: 'website/src/repl/components/panel/PatternsTab.jsx',
     steps: [
       {
@@ -71,7 +100,7 @@ const edits = [
         // classes constantly, and a literal anchor breaks on every reflow.
         name: 'import panel',
         pattern: /^import .*from '@src\/cx\.mjs';$/m,
-        insertAfter: `\nimport { GitHubSyncBar, useGitHubAutoSync } from '@src/github/GitHubPanel.jsx'; // ${MARK}`,
+        insertAfter: `\nimport { GitHubSyncBar, useGitHubAutoSync } from '@src/patternvault/GitHubPanel.jsx'; // ${MARK}`,
         context: 'cx.mjs',
       },
       {

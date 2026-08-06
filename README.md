@@ -19,7 +19,7 @@ at image build time. The two trees only ever meet inside a container.
 ## Layout
 
 ```
-overlay/website/src/github/   the five files copied into a Strudel checkout
+overlay/website/src/patternvault/   files copied into a Strudel checkout
 scripts/install.mjs           applies / checks / reverts the overlay
 scripts/bootstrap.sh          fetches upstream into build/ and applies
 Dockerfile                    fetches upstream, applies, builds, serves via nginx
@@ -57,6 +57,56 @@ corepack install || corepack prepare pnpm@10 --activate
 | `node scripts/install.mjs <dir> --revert` | remove it, leaving `git diff` clean |
 
 ## What the overlay does
+
+Three things, in one folder (`overlay/website/src/patternvault/`):
+
+| | |
+| --- | --- |
+| **GitHub sync** | a bar at the top of the patterns tab |
+| **chords** | a new panel tab — build a chord, hear it, copy the notation |
+| **midi** | a new panel tab — play notes in, get notation out |
+
+### Chords tab
+
+Root, quality, octave, inversion. It shows the spelled notes, plays them
+(block or rolled) through a small standalone oscillator, and emits one of four
+forms:
+
+```js
+note("[c3,e3,g3,bb3]")     // stacked
+note("c3 e3 g3 bb3")       // sequence
+note("<c3 e3 g3 bb3>")     // one per cycle
+chord("C7").voicing()      // let Strudel voice it
+```
+
+Spelling is by interval, not pitch class — `C7` gives `bb3`, not `a#3`, because
+a dominant seventh is a flatted seventh. Where strict spelling would need a
+double accidental (`Cdim7`'s seventh is B-double-flat), it falls back to the
+enharmonic name and says so, since Strudel's note parser isn't guaranteed to
+take `bbb`.
+
+The preview synth is a plain `AudioContext` with a triangle oscillator,
+deliberately not wired into Strudel's audio engine — reaching into superdough
+would couple the panel to internals that move, and "is this the chord I meant?"
+doesn't need a sampler.
+
+### Midi tab
+
+Connect, pick an input, hit record, play. Note-ons within 40ms collapse into one
+step, so a strummed chord reads as a chord rather than four sixteenths:
+
+```js
+note("c4 [e4,g4] a4")            // sequence
+note("[c4,e4,g4]")               // everything stacked
+note("c4 d4 ~ ~ e4")             // gaps filled with rests
+```
+
+Rests are quantised against the shortest gap in the take and capped at eight in
+a row. Sharps or flats are your choice. Note-on with velocity 0 is handled as
+note-off, which is what many controllers actually send.
+
+Web MIDI needs a secure context, so on a plain-http LAN the panel says so
+explicitly rather than appearing broken.
 
 ### The token
 
@@ -209,9 +259,11 @@ corresponding source is upstream at the ref recorded in the
   across empty / 1 / 55 / 56 / 64 / 1000-byte and multi-byte-UTF-8 inputs
 - `install.mjs` applies, is idempotent, `--check` passes, `--revert` leaves
   `git status` clean
-- all five anchors match exactly once against both the pre-Codeberg tree and current
-  upstream, where the inner `UserPatterns` component was folded into the exported
-  `PatternsTab`
+- all eight anchors match exactly once; `--check` passes, apply is idempotent
+- chord spelling unit-tested against known-correct answers (C7, Cmaj7, Bb maj7,
+  F#m7, Db major, Eb m9, C13, inversions) and the double-accidental fallback
+- MIDI notation unit-tested for jitter grouping, stacks inside sequences, rest
+  quantisation, flat spelling, and the empty take
 - `pnpm install && npm run build` on an overlaid checkout succeeds; the sync module
   is present in `website/dist/_astro/`
 - all five overlay modules bundle clean through esbuild; workflow YAML parses and
