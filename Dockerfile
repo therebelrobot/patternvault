@@ -8,7 +8,7 @@
 # COPYs, so no instruction runs under QEMU and the arm64 image builds at
 # amd64 speed.
 
-FROM --platform=$BUILDPLATFORM node:22-bookworm-slim AS build
+FROM --platform=$BUILDPLATFORM node:22.23.4-bookworm-slim AS build
 
 ARG STRUDEL_REPO=https://codeberg.org/uzu/strudel.git
 # Pass a resolved commit sha for a reproducible build. CI does this via
