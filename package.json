@@ -5,6 +5,9 @@
   "description": "Unofficial GitHub-backed pattern storage for Strudel, applied as a build-time overlay",
   "license": "Unlicense",
   "type": "module",
+  "engines": {
+    "node": ">=22.23.4"
+  },
   "scripts": {
     "bootstrap": "./scripts/bootstrap.sh",
     "apply": "node scripts/install.mjs build/upstream",
